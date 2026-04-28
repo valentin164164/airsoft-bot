@@ -1,8 +1,6 @@
 import os
-import re
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
-from twilio.rest import Client as TwilioClient
 from openai import OpenAI
 
 app = Flask(__name__)
@@ -25,10 +23,10 @@ INFO_NEGOCIO = {
 }
 
 PRECIOS = {
-    "turno_base": 23000,  # por persona
-    "recarga_300": 6000,   # 300 balines
-    "recarga_150": 4000,   # 150 balines
-    "seña": 6000,          # por persona
+    "turno_base": 23000,
+    "recarga_300": 6000,
+    "recarga_150": 4000,
+    "seña": 6000,
 }
 
 EQUIPAMIENTO = "Marcadora, máscara de protección, chaleco, lentes de seguridad y carga inicial de 300 balines. También hay cantina y baño disponible."
@@ -37,27 +35,29 @@ HORARIOS = {
     "verano": {
         "sabados": ["12:30", "16:00", "17:00", "18:00"],
         "domingos": ["09:00", "12:30", "16:00", "17:00", "18:00"],
-        "feriados": "Consultar disponibilidad",
     },
     "otoño_invierno": {
         "sabados": ["12:30", "16:00"],
         "domingos": ["09:00", "12:30", "16:00"],
-        "feriados": "Consultar disponibilidad",
-        "nota": "En otoño/invierno los horarios se reducen porque el sol baja antes.",
     },
 }
 
-JUGADORES = {
-    "minimo": 8,
-    "maximo": 16,
-    "nota_partida_publica": "Si no llegás al mínimo de 8, hacemos partidas públicas donde se van sumando jugadores.",
-}
+JUGADORES = {"minimo": 8, "maximo": 16}
 
 REGLAS = [
     'Sistema de juego basado en el honor: "Cantá la baja / Jugá limpio".',
     "Seguridad estricta: uso obligatorio de lentes/máscaras en zonas de juego.",
     "Se suspende y reprograma por lluvia fuerte (el agua desvía los balines). Con lluvia fina se juega normalmente.",
 ]
+
+# ============================================================
+# 🖼 IMÁGENES (URLs públicas - postimg.cc)
+# ============================================================
+
+IMAGENES = {
+    "precios": "https://i.postimg.cc/0QgVVZkC/1.jpg",
+    "horarios": "https://i.postimg.cc/kGswXmxH/2.jpg",
+}
 
 # ============================================================
 # 🔍 DETECCIÓN DE INTENCIONES (respuestas fijas)
@@ -75,7 +75,7 @@ PALABRAS_CLAVE = {
             f"💳 Formas de pago: {INFO_NEGOCIO['formas_pago']}\n"
             f"📌 Seña para reservar: ${PRECIOS['seña']:,} por jugador (mín. 24hs antes)."
         ),
-        "imagen": "https://i.imgur.com/cy1gggJ.jpeg",
+        "imagen": IMAGENES["precios"],
     },
     "horarios": {
         "keywords": ["horario", "hora", "cuando", "cuándo", "dia", "día", "disponible", "disponibilidad", "turno", "turnos", "abierto", "abren"],
@@ -91,7 +91,7 @@ PALABRAS_CLAVE = {
             f"📌 Feriados: consultar disponibilidad.\n"
             f"🔖 Seña: ${PRECIOS['seña']:,} por jugador, mín. 24hs antes."
         ),
-        "imagen": "https://i.imgur.com/m0wVLEi.jpeg",
+        "imagen": IMAGENES["horarios"],
     },
     "jugadores": {
         "keywords": ["cuantos", "cuántos", "jugador", "personas", "grupo", "gente", "minimo", "mínimo", "maximo", "máximo", "somos", "cantidad"],
@@ -122,6 +122,7 @@ PALABRAS_CLAVE = {
             f"No necesitás experiencia ni equipo propio. "
             f"Les explicamos todo antes de jugar y estamos con ustedes en todo momento."
         ),
+        "imagen": IMAGENES["precios"],
     },
     "ubicacion": {
         "keywords": ["donde", "dónde", "ubicacion", "ubicación", "direccion", "dirección", "llegar", "mapa", "queda"],
@@ -140,6 +141,7 @@ PALABRAS_CLAVE = {
             f"▪️ Formas de pago: {INFO_NEGOCIO['formas_pago']}\n\n"
             f"📩 Escribinos el día y horario que prefieren y la cantidad de jugadores, ¡y lo coordinamos!"
         ),
+        "imagen": IMAGENES["horarios"],
     },
     "paintball": {
         "keywords": ["paintball", "pintura", "paint"],
@@ -199,7 +201,6 @@ PALABRAS_CLAVE = {
 def detectar_intencion(mensaje):
     """Detecta la intención del mensaje basándose en palabras clave."""
     mensaje_lower = mensaje.lower()
-    # Quitar acentos para matching más flexible
     mensaje_clean = mensaje_lower
     for a, b in [("á", "a"), ("é", "e"), ("í", "i"), ("ó", "o"), ("ú", "u")]:
         mensaje_clean = mensaje_clean.replace(a, b)
@@ -215,7 +216,7 @@ def detectar_intencion(mensaje):
 
 
 # ============================================================
-# 🤖 RESPUESTA CON CLAUDE (IA) - Para preguntas no predefinidas
+# 🤖 RESPUESTA CON CHATGPT (IA)
 # ============================================================
 
 CONTEXTO_SISTEMA = f"""Sos el asistente virtual de Airsoft Paraná, un campo de airsoft en Paraná, Entre Ríos, Argentina.
@@ -299,40 +300,22 @@ def webhook():
         respuesta = respuesta_ia(mensaje_entrante)
         imagen = None
 
-    # 3. Si hay imagen, enviar por API de Twilio (más confiable)
-    if imagen:
-        try:
-            twilio_client = TwilioClient(
-                os.environ.get("TWILIO_ACCOUNT_SID"),
-                os.environ.get("TWILIO_AUTH_TOKEN")
-            )
-            twilio_client.messages.create(
-                body=respuesta,
-                media_url=[imagen],
-                from_=request.form.get("To", ""),
-                to=numero_remitente
-            )
-            print(f"📤 Respuesta con imagen enviada via API")
-            # Devolver TwiML vacío para no duplicar mensaje
-            return str(MessagingResponse()), 200, {"Content-Type": "text/xml"}
-        except Exception as e:
-            print(f"Error enviando imagen por API: {e}")
-            # Si falla, enviar solo texto por TwiML
-            twiml = MessagingResponse()
-            twiml.message(respuesta)
-            return str(twiml), 200, {"Content-Type": "text/xml"}
-
-    # 4. Sin imagen, enviar solo texto por TwiML
+    # 3. Enviar respuesta
     twiml = MessagingResponse()
-    twiml.message(respuesta)
+    msg = twiml.message(respuesta)
 
-    print(f"📤 Respuesta: {respuesta[:100]}...")
+    if imagen:
+        msg.media(imagen)
+        print(f"📤 Respuesta con imagen: {respuesta[:80]}...")
+    else:
+        print(f"📤 Respuesta: {respuesta[:80]}...")
+
     return str(twiml), 200, {"Content-Type": "text/xml"}
 
 
 @app.route("/", methods=["GET"])
 def health():
-    """Health check para que el servicio no se duerma."""
+    """Health check."""
     return "✅ Airsoft Paraná Bot activo", 200
 
 
