@@ -55,8 +55,8 @@ REGLAS = [
 # ============================================================
 
 IMAGENES = {
-    "precios": "https://i.postimg.cc/0QgVVZkC/1.jpg",
-    "horarios": "https://i.postimg.cc/kGswXmxH/2.jpg",
+    "precios": "https://i.postimg.cc/kGswXmxH/2.jpg",
+    "horarios": "https://i.postimg.cc/0QgVVZkC/1.jpg",
 }
 
 # ============================================================
