@@ -1,22 +1,45 @@
 import os
+import json
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
 from openai import OpenAI
+import redis
 
 app = Flask(__name__)
 
 # ============================================================
+# 🧠 MEMORIA - Redis (guarda últimos 10 mensajes por persona)
+# ============================================================
+
+redis_client = redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379"))
+MAX_HISTORIAL = 10  # mensajes por persona
+EXPIRACION_HISTORIAL = 60 * 60 * 24 * 7  # 7 días sin escribir = se borra
+
+
+def guardar_mensaje(numero, rol, contenido):
+    """Guarda un mensaje en el historial de la conversación."""
+    key = f"chat:{numero}"
+    mensaje = json.dumps({"role": rol, "content": contenido})
+    redis_client.rpush(key, mensaje)
+    redis_client.ltrim(key, -MAX_HISTORIAL * 2, -1)  # x2 porque guarda user+assistant
+    redis_client.expire(key, EXPIRACION_HISTORIAL)
+
+
+def obtener_historial(numero):
+    """Obtiene el historial de conversación de un número."""
+    key = f"chat:{numero}"
+    mensajes = redis_client.lrange(key, 0, -1)
+    return [json.loads(m) for m in mensajes]
+
+
+# ============================================================
 # 📋 INFORMACIÓN DE AIRSOFT PARANÁ
-# Modificá estos datos cuando quieras actualizar el bot
 # ============================================================
 
 INFO_NEGOCIO = {
     "nombre": "Airsoft Paraná",
-    "descripcion": "Campo de Airsoft en Paraná, Entre Ríos. Modalidad CQB en el campo VIALPARK.",
     "ubicacion": "Paraná, Entre Ríos. Campo VIALPARK (modalidad CQB).",
-    "edad_minima": 18,
     "formas_pago": "Efectivo y transferencia bancaria.",
-    "reserva": "Se requiere una seña de $6.000 por jugador con un mínimo de 24 horas de anticipación.",
     "duracion_turno": "2 horas",
     "recomendaciones": "Traer pantalón largo, zapatillas y gorro.",
     "grupo_whatsapp": "https://chat.whatsapp.com/LRx5jZ5BaP05WBtgqAq3Ip?mode=gi_t",
@@ -49,10 +72,6 @@ REGLAS = [
     "Seguridad estricta: uso obligatorio de lentes/máscaras en zonas de juego.",
     "Se suspende y reprograma por lluvia fuerte (el agua desvía los balines). Con lluvia fina se juega normalmente.",
 ]
-
-# ============================================================
-# 🖼 IMÁGENES (URLs públicas - postimg.cc)
-# ============================================================
 
 IMAGENES = {
     "precios": "https://i.postimg.cc/kGswXmxH/2.jpg",
@@ -108,7 +127,7 @@ PALABRAS_CLAVE = {
         ),
     },
     "equipamiento": {
-        "keywords": ["equipo", "equipamiento", "incluye", "dan", "prestan", "marcadora", "mascara", "máscara", "chaleco", "balines", "municion", "munición"],
+        "keywords": ["equipo", "equipamiento", "incluye", "dan", "prestan", "mascara", "máscara", "chaleco", "balines", "municion", "munición"],
         "respuesta": (
             f"🎯 *¿Qué incluye el turno?*\n\n"
             f"Te damos todo lo necesario:\n"
@@ -216,45 +235,71 @@ def detectar_intencion(mensaje):
 
 
 # ============================================================
-# 🤖 RESPUESTA CON CHATGPT (IA)
+# 🤖 RESPUESTA CON CHATGPT (IA) - Personalidad humana
 # ============================================================
 
-CONTEXTO_SISTEMA = f"""Sos el asistente virtual de Airsoft Paraná, un campo de airsoft en Paraná, Entre Ríos, Argentina.
-Tu personalidad es amigable, copada y con onda. Usás un tono informal argentino (tuteo con "vos").
-Respondé de forma concisa (máximo 3-4 oraciones) y siempre en español.
+CONTEXTO_SISTEMA = f"""Sos Valentín, encargado de Airsoft Paraná. Atendés las consultas por WhatsApp.
+Tu forma de hablar es como un pibe argentino de Paraná: informal, copado, con buena onda pero profesional.
+Hablás con "vos", usás expresiones como "dale", "genial", "de una", "mandale", "joya", "tranqui".
+
+CÓMO ESCRIBÍS:
+- Mensajes CORTOS, como si fuera un WhatsApp real (2-4 líneas máximo)
+- NO uses listas con viñetas ni formato tipo robot
+- NO uses asteriscos para negritas ni formatos raros
+- Escribí como escribirías un WhatsApp a un amigo que te pregunta del laburo
+- Podés usar 1-2 emojis por mensaje, no más
+- NUNCA digas "soy un asistente virtual" ni "soy un bot" — sos Valentín
+- Variá tus respuestas, no repitas siempre lo mismo
+- Si te saludan, respondé el saludo cortito y preguntá en qué los podés ayudar
+
+EJEMPLOS DE CÓMO RESPONDÉS:
+- "Buenas! Sí, el turno sale $23.000 por persona y dura 2 horas. Te damos todo el equipo 💪"
+- "Dale, para reservar necesito que me digas qué día prefieren, horario y cuántos son"
+- "Jaja no, no es paintball! El airsoft usa balines de 6mm sin pintura, duele bastante menos 😉"
+- "Tranqui, no necesitás saber nada. Nosotros les explicamos todo antes de arrancar"
 
 INFORMACIÓN DEL NEGOCIO:
-- Precio por persona: ${PRECIOS['turno_base']:,} (turno de {INFO_NEGOCIO['duracion_turno']})
+- Precio: ${PRECIOS['turno_base']:,} por persona (turno de {INFO_NEGOCIO['duracion_turno']})
 - Recargas: $6.000 (300 balines) o $4.000 (150 balines)
 - Horarios verano: Sáb {', '.join(HORARIOS['verano']['sabados'])} hs / Dom {', '.join(HORARIOS['verano']['domingos'])} hs
 - Horarios otoño/invierno: Sáb {', '.join(HORARIOS['otoño_invierno']['sabados'])} hs / Dom {', '.join(HORARIOS['otoño_invierno']['domingos'])} hs
 - Jugadores: mínimo {JUGADORES['minimo']}, máximo {JUGADORES['maximo']} por partida privada
 - Si no llegan al mínimo, hay partidas públicas. Grupo de WSP: {INFO_NEGOCIO['grupo_whatsapp']}
-- Incluye: {EQUIPAMIENTO}
+- Incluye: marcadora, máscara, chaleco, lentes y 300 balines
+- Hay cantina y baño
 - Ubicación: {INFO_NEGOCIO['ubicacion']}
-- Edad mínima: 18 años
+- Solo mayores de 18
 - Seña: ${PRECIOS['seña']:,} por jugador (mín. 24hs antes)
 - Pago: {INFO_NEGOCIO['formas_pago']}
-- Recomendaciones: {INFO_NEGOCIO['recomendaciones']}
-- El airsoft NO es paintball, usa balines de 6mm sin pintura, duele menos
+- Traer pantalón largo, zapatillas y gorro
 - Vendemos marcadoras desde 200 USD, asesoramos y traemos por pedido
-- No se necesita experiencia previa, damos todo y explicamos
-- Reglas: sistema de honor (cantá la baja), lentes/máscara obligatorios, se suspende por lluvia fuerte
-- Se juega en el campo VIALPARK (modalidad CQB)
+- No se necesita experiencia previa
+- Sistema de honor: cantá la baja / jugá limpio
+- Se suspende por lluvia fuerte, con lluvia fina se juega
+- Campo VIALPARK, modalidad CQB
 
-REGLAS PARA RESPONDER:
-1. Si la pregunta es sobre venta de marcadoras específicas (modelos, stock actual), decí que un asesor lo va a contactar personalmente.
-2. Si te piden reservar, pedí: día preferido, horario y cantidad de jugadores.
-3. No inventes información que no tengas.
-4. Si no sabés algo, decí que vas a consultar con el equipo y responder a la brevedad.
-5. Usá emojis con moderación.
+REGLAS:
+1. Si preguntan por modelos/stock de marcadoras, decí que les vas a pasar info personalmente
+2. Si quieren reservar, pedí: día, horario y cantidad de jugadores
+3. No inventes info que no tengas
+4. Si no sabés algo, decí que lo consultás y les respondés
+5. RECORDÁ lo que te dijeron antes en la conversación (cantidad de personas, día que quieren, etc.)
 """
 
 
-def respuesta_ia(mensaje):
-    """Genera respuesta usando ChatGPT para preguntas no cubiertas por las fijas."""
+def respuesta_ia(mensaje, numero):
+    """Genera respuesta usando ChatGPT con memoria de conversación."""
     try:
         import httpx
+
+        # Obtener historial de esta persona
+        historial = obtener_historial(numero)
+
+        # Armar mensajes: sistema + historial + mensaje nuevo
+        mensajes = [{"role": "system", "content": CONTEXTO_SISTEMA}]
+        mensajes.extend(historial)
+        mensajes.append({"role": "user", "content": mensaje})
+
         client = OpenAI(
             api_key=os.environ.get("OPENAI_API_KEY"),
             http_client=httpx.Client()
@@ -262,20 +307,22 @@ def respuesta_ia(mensaje):
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             max_tokens=300,
-            messages=[
-                {"role": "system", "content": CONTEXTO_SISTEMA},
-                {"role": "user", "content": mensaje},
-            ],
+            messages=mensajes,
         )
-        return response.choices[0].message.content
+        respuesta = response.choices[0].message.content
+
+        # Guardar en memoria
+        guardar_mensaje(numero, "user", mensaje)
+        guardar_mensaje(numero, "assistant", respuesta)
+
+        return respuesta
     except Exception as e:
         print(f"Error con OpenAI API: {e}")
         return (
-            "¡Hola! Gracias por escribirnos. 😊\n\n"
-            "En este momento no puedo procesar tu consulta, "
-            "pero te va a responder un asesor a la brevedad.\n\n"
-            "Mientras tanto, podés preguntarme por:\n"
-            "💰 Precios\n📅 Horarios\n👥 Jugadores\n📍 Ubicación"
+            "Buenas! Gracias por escribirnos 😊\n\n"
+            "Ahora no puedo responderte, pero te contesto a la brevedad.\n\n"
+            "Mientras tanto preguntame por:\n"
+            "Precios, Horarios, Jugadores o Ubicación"
         )
 
 
@@ -295,10 +342,14 @@ def webhook():
     # 1. Intentar respuesta fija
     respuesta, imagen = detectar_intencion(mensaje_entrante)
 
-    # 2. Si no hay respuesta fija, usar IA
+    # 2. Si no hay respuesta fija, usar IA con memoria
     if respuesta is None:
-        respuesta = respuesta_ia(mensaje_entrante)
+        respuesta = respuesta_ia(mensaje_entrante, numero_remitente)
         imagen = None
+    else:
+        # Guardar también las respuestas fijas en la memoria
+        guardar_mensaje(numero_remitente, "user", mensaje_entrante)
+        guardar_mensaje(numero_remitente, "assistant", respuesta)
 
     # 3. Enviar respuesta
     twiml = MessagingResponse()
