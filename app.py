@@ -2,6 +2,7 @@ import os
 import re
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
+from twilio.rest import Client as TwilioClient
 from openai import OpenAI
 
 app = Flask(__name__)
@@ -298,13 +299,32 @@ def webhook():
         respuesta = respuesta_ia(mensaje_entrante)
         imagen = None
 
-    # 3. Enviar respuesta por Twilio
-    twiml = MessagingResponse()
-    msg = twiml.message(respuesta)
-
-    # 4. Adjuntar imagen si hay
+    # 3. Si hay imagen, enviar por API de Twilio (más confiable)
     if imagen:
-        msg.media(imagen)
+        try:
+            twilio_client = TwilioClient(
+                os.environ.get("TWILIO_ACCOUNT_SID"),
+                os.environ.get("TWILIO_AUTH_TOKEN")
+            )
+            twilio_client.messages.create(
+                body=respuesta,
+                media_url=[imagen],
+                from_=request.form.get("To", ""),
+                to=numero_remitente
+            )
+            print(f"📤 Respuesta con imagen enviada via API")
+            # Devolver TwiML vacío para no duplicar mensaje
+            return str(MessagingResponse()), 200, {"Content-Type": "text/xml"}
+        except Exception as e:
+            print(f"Error enviando imagen por API: {e}")
+            # Si falla, enviar solo texto por TwiML
+            twiml = MessagingResponse()
+            twiml.message(respuesta)
+            return str(twiml), 200, {"Content-Type": "text/xml"}
+
+    # 4. Sin imagen, enviar solo texto por TwiML
+    twiml = MessagingResponse()
+    twiml.message(respuesta)
 
     print(f"📤 Respuesta: {respuesta[:100]}...")
     return str(twiml), 200, {"Content-Type": "text/xml"}
