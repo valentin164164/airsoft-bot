@@ -74,6 +74,7 @@ PALABRAS_CLAVE = {
             f"💳 Formas de pago: {INFO_NEGOCIO['formas_pago']}\n"
             f"📌 Seña para reservar: ${PRECIOS['seña']:,} por jugador (mín. 24hs antes)."
         ),
+        "imagen": "https://raw.githubusercontent.com/valentin164164/airsoft-bot/main/imagenes/precios.png",
     },
     "horarios": {
         "keywords": ["horario", "hora", "cuando", "cuándo", "dia", "día", "disponible", "disponibilidad", "turno", "turnos", "abierto", "abren"],
@@ -89,6 +90,7 @@ PALABRAS_CLAVE = {
             f"📌 Feriados: consultar disponibilidad.\n"
             f"🔖 Seña: ${PRECIOS['seña']:,} por jugador, mín. 24hs antes."
         ),
+        "imagen": "https://raw.githubusercontent.com/valentin164164/airsoft-bot/main/imagenes/info.png",
     },
     "jugadores": {
         "keywords": ["cuantos", "cuántos", "jugador", "personas", "grupo", "gente", "minimo", "mínimo", "maximo", "máximo", "somos", "cantidad"],
@@ -207,8 +209,8 @@ def detectar_intencion(mensaje):
             for a, b in [("á", "a"), ("é", "e"), ("í", "i"), ("ó", "o"), ("ú", "u")]:
                 keyword_clean = keyword_clean.replace(a, b)
             if keyword_clean in mensaje_clean:
-                return data["respuesta"]
-    return None
+                return data["respuesta"], data.get("imagen")
+    return None, None
 
 
 # ============================================================
@@ -289,15 +291,20 @@ def webhook():
     print(f"📩 Mensaje de {numero_remitente}: {mensaje_entrante}")
 
     # 1. Intentar respuesta fija
-    respuesta = detectar_intencion(mensaje_entrante)
+    respuesta, imagen = detectar_intencion(mensaje_entrante)
 
     # 2. Si no hay respuesta fija, usar IA
     if respuesta is None:
         respuesta = respuesta_ia(mensaje_entrante)
+        imagen = None
 
     # 3. Enviar respuesta por Twilio
     twiml = MessagingResponse()
-    twiml.message(respuesta)
+    msg = twiml.message(respuesta)
+
+    # 4. Adjuntar imagen si hay
+    if imagen:
+        msg.media(imagen)
 
     print(f"📤 Respuesta: {respuesta[:100]}...")
     return str(twiml), 200, {"Content-Type": "text/xml"}
