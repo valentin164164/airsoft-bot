@@ -218,12 +218,33 @@ PALABRAS_CLAVE = {
 
 
 def detectar_intencion(mensaje):
-    """Detecta la intención del mensaje basándose en palabras clave."""
+    """Detecta la intención del mensaje basándose en palabras clave.
+    Solo responde con respuesta fija si el mensaje es simple/directo.
+    Si el mensaje es complejo (más contexto, números, varias preguntas),
+    deja que la IA responda para dar una respuesta más inteligente.
+    """
     mensaje_lower = mensaje.lower()
     mensaje_clean = mensaje_lower
     for a, b in [("á", "a"), ("é", "e"), ("í", "i"), ("ó", "o"), ("ú", "u")]:
         mensaje_clean = mensaje_clean.replace(a, b)
 
+    # Si el mensaje es largo o tiene números/contexto extra, dejar que la IA responda
+    # Esto permite que "somos 10, cuánto sale?" vaya a la IA en vez de respuesta fija
+    palabras = mensaje_clean.split()
+    tiene_numeros = any(c.isdigit() for c in mensaje_clean)
+    es_complejo = len(palabras) > 6 or tiene_numeros
+
+    # Palabras que indican que es una pregunta contextual (no simple)
+    indicadores_contexto = ["si ", "somos", "para ", "total", "todos", "entre", "seria", "sería",
+                            "podemos", "podriamos", "quiero", "queremos", "necesito", "necesitamos",
+                            "pero", "aunque", "porque", "entonces", "también", "ademas", "además"]
+
+    tiene_contexto = any(ind in mensaje_clean for ind in indicadores_contexto)
+
+    if es_complejo or tiene_contexto:
+        return None, None
+
+    # Si es un mensaje simple, buscar respuesta fija
     for categoria, data in PALABRAS_CLAVE.items():
         for keyword in data["keywords"]:
             keyword_clean = keyword
