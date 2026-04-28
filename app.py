@@ -2,7 +2,7 @@ import os
 import re
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
-import anthropic
+from openai import OpenAI
 
 app = Flask(__name__)
 
@@ -248,18 +248,20 @@ REGLAS PARA RESPONDER:
 
 
 def respuesta_ia(mensaje):
-    """Genera respuesta usando Claude para preguntas no cubiertas por las fijas."""
+    """Genera respuesta usando ChatGPT para preguntas no cubiertas por las fijas."""
     try:
-        client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-        response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+        client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
             max_tokens=300,
-            system=CONTEXTO_SISTEMA,
-            messages=[{"role": "user", "content": mensaje}],
+            messages=[
+                {"role": "system", "content": CONTEXTO_SISTEMA},
+                {"role": "user", "content": mensaje},
+            ],
         )
-        return response.content[0].text
+        return response.choices[0].message.content
     except Exception as e:
-        print(f"Error con Claude API: {e}")
+        print(f"Error con OpenAI API: {e}")
         return (
             "¡Hola! Gracias por escribirnos. 😊\n\n"
             "En este momento no puedo procesar tu consulta, "
