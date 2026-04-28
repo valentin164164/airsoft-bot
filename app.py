@@ -74,7 +74,7 @@ PALABRAS_CLAVE = {
             f"💳 Formas de pago: {INFO_NEGOCIO['formas_pago']}\n"
             f"📌 Seña para reservar: ${PRECIOS['seña']:,} por jugador (mín. 24hs antes)."
         ),
-        "imagen": "https://raw.githubusercontent.com/valentin164164/airsoft-bot/main/imagenes/precios.png",
+        "imagen": "https://i.imgur.com/cy1gggJ.jpeg",
     },
     "horarios": {
         "keywords": ["horario", "hora", "cuando", "cuándo", "dia", "día", "disponible", "disponibilidad", "turno", "turnos", "abierto", "abren"],
@@ -90,7 +90,7 @@ PALABRAS_CLAVE = {
             f"📌 Feriados: consultar disponibilidad.\n"
             f"🔖 Seña: ${PRECIOS['seña']:,} por jugador, mín. 24hs antes."
         ),
-        "imagen": "https://raw.githubusercontent.com/valentin164164/airsoft-bot/main/imagenes/info.png",
+        "imagen": "https://i.imgur.com/m0wVLEi.jpeg",
     },
     "jugadores": {
         "keywords": ["cuantos", "cuántos", "jugador", "personas", "grupo", "gente", "minimo", "mínimo", "maximo", "máximo", "somos", "cantidad"],
