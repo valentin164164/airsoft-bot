@@ -250,7 +250,11 @@ REGLAS PARA RESPONDER:
 def respuesta_ia(mensaje):
     """Genera respuesta usando ChatGPT para preguntas no cubiertas por las fijas."""
     try:
-        client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        import httpx
+        client = OpenAI(
+            api_key=os.environ.get("OPENAI_API_KEY"),
+            http_client=httpx.Client()
+        )
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             max_tokens=300,
