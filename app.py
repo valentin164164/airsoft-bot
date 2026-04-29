@@ -1,7 +1,7 @@
 import os
 import json
+import requests
 from flask import Flask, request
-from twilio.twiml.messaging_response import MessagingResponse
 from openai import OpenAI
 import redis
 
@@ -77,6 +77,91 @@ IMAGENES = {
     "precios": "https://i.postimg.cc/kGswXmxH/2.jpg",
     "horarios": "https://i.postimg.cc/0QgVVZkC/1.jpg",
 }
+
+# ============================================================
+# 📨 ENVIAR MENSAJES POR WHATSAPP CLOUD API (META)
+# ============================================================
+
+WHATSAPP_API_URL = "https://graph.facebook.com/v21.0/{phone_id}/messages"
+
+
+def enviar_mensaje_texto(telefono, texto):
+    """Envía un mensaje de texto por WhatsApp Cloud API."""
+    phone_id = os.environ.get("WHATSAPP_PHONE_NUMBER_ID")
+    token = os.environ.get("WHATSAPP_ACCESS_TOKEN")
+    url = WHATSAPP_API_URL.format(phone_id=phone_id)
+
+    # WhatsApp limita a 4096 chars — partir si es más largo
+    MAX_LEN = 4000
+    partes = []
+    restante = texto
+    while restante:
+        if len(restante) <= MAX_LEN:
+            partes.append(restante)
+            break
+        corte = restante.rfind('\n', 0, MAX_LEN)
+        if corte < MAX_LEN // 2:
+            corte = MAX_LEN
+        partes.append(restante[:corte])
+        restante = restante[corte:].strip()
+
+    for parte in partes:
+        try:
+            resp = requests.post(url, json={
+                "messaging_product": "whatsapp",
+                "to": telefono,
+                "type": "text",
+                "text": {"body": parte}
+            }, headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json"
+            })
+            if resp.status_code != 200:
+                print(f"[Meta API] Error: {resp.status_code} — {resp.text}")
+        except Exception as e:
+            print(f"[Meta API] Excepción: {e}")
+
+
+def enviar_imagen(telefono, url_imagen, caption=""):
+    """Envía una imagen por WhatsApp Cloud API."""
+    phone_id = os.environ.get("WHATSAPP_PHONE_NUMBER_ID")
+    token = os.environ.get("WHATSAPP_ACCESS_TOKEN")
+    url = WHATSAPP_API_URL.format(phone_id=phone_id)
+
+    try:
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": telefono,
+            "type": "image",
+            "image": {"link": url_imagen}
+        }
+        if caption:
+            payload["image"]["caption"] = caption
+        requests.post(url, json=payload, headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        })
+    except Exception as e:
+        print(f"[Meta API] Error enviando imagen: {e}")
+
+
+def marcar_como_leido(message_id):
+    """Marca un mensaje como leído (tildes azules)."""
+    phone_id = os.environ.get("WHATSAPP_PHONE_NUMBER_ID")
+    token = os.environ.get("WHATSAPP_ACCESS_TOKEN")
+    url = WHATSAPP_API_URL.format(phone_id=phone_id)
+    try:
+        requests.post(url, json={
+            "messaging_product": "whatsapp",
+            "status": "read",
+            "message_id": message_id
+        }, headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        })
+    except:
+        pass  # No es crítico
+
 
 # ============================================================
 # 🔍 DETECCIÓN DE INTENCIONES (respuestas fijas)
@@ -218,23 +303,16 @@ PALABRAS_CLAVE = {
 
 
 def detectar_intencion(mensaje):
-    """Detecta la intención del mensaje basándose en palabras clave.
-    Solo responde con respuesta fija si el mensaje es simple/directo.
-    Si el mensaje es complejo (más contexto, números, varias preguntas),
-    deja que la IA responda para dar una respuesta más inteligente.
-    """
+    """Detecta la intención del mensaje basándose en palabras clave."""
     mensaje_lower = mensaje.lower()
     mensaje_clean = mensaje_lower
     for a, b in [("á", "a"), ("é", "e"), ("í", "i"), ("ó", "o"), ("ú", "u")]:
         mensaje_clean = mensaje_clean.replace(a, b)
 
-    # Si el mensaje es largo o tiene números/contexto extra, dejar que la IA responda
-    # Esto permite que "somos 10, cuánto sale?" vaya a la IA en vez de respuesta fija
     palabras = mensaje_clean.split()
     tiene_numeros = any(c.isdigit() for c in mensaje_clean)
     es_complejo = len(palabras) > 6 or tiene_numeros
 
-    # Palabras que indican que es una pregunta contextual (no simple)
     indicadores_contexto = ["si ", "somos", "para ", "total", "todos", "entre", "seria", "sería",
                             "podemos", "podriamos", "quiero", "queremos", "necesito", "necesitamos",
                             "pero", "aunque", "porque", "entonces", "también", "ademas", "además"]
@@ -244,7 +322,6 @@ def detectar_intencion(mensaje):
     if es_complejo or tiene_contexto:
         return None, None
 
-    # Si es un mensaje simple, buscar respuesta fija
     for categoria, data in PALABRAS_CLAVE.items():
         for keyword in data["keywords"]:
             keyword_clean = keyword
@@ -256,7 +333,7 @@ def detectar_intencion(mensaje):
 
 
 # ============================================================
-# 🤖 RESPUESTA CON CHATGPT (IA) - Personalidad humana
+# 🤖 RESPUESTA CON CHATGPT (IA)
 # ============================================================
 
 CONTEXTO_SISTEMA = f"""Sos Valentín, encargado de Airsoft Paraná. Atendés las consultas por WhatsApp.
@@ -313,10 +390,8 @@ def respuesta_ia(mensaje, numero):
     try:
         import httpx
 
-        # Obtener historial de esta persona
         historial = obtener_historial(numero)
 
-        # Armar mensajes: sistema + historial + mensaje nuevo
         mensajes = [{"role": "system", "content": CONTEXTO_SISTEMA}]
         mensajes.extend(historial)
         mensajes.append({"role": "user", "content": mensaje})
@@ -332,7 +407,6 @@ def respuesta_ia(mensaje, numero):
         )
         respuesta = response.choices[0].message.content
 
-        # Guardar en memoria
         guardar_mensaje(numero, "user", mensaje)
         guardar_mensaje(numero, "assistant", respuesta)
 
@@ -348,47 +422,104 @@ def respuesta_ia(mensaje, numero):
 
 
 # ============================================================
-# 🌐 WEBHOOK DE TWILIO
+# 🌐 WEBHOOKS DE WHATSAPP CLOUD API (META)
 # ============================================================
+
+
+@app.route("/webhook", methods=["GET"])
+def verificar_webhook():
+    """Meta envía un GET para verificar el webhook (solo una vez al configurar)."""
+    mode = request.args.get("hub.mode")
+    token = request.args.get("hub.verify_token")
+    challenge = request.args.get("hub.challenge")
+
+    verify_token = os.environ.get("WHATSAPP_VERIFY_TOKEN", "")
+
+    if mode == "subscribe" and token == verify_token:
+        print("✅ Webhook verificado por Meta")
+        return challenge, 200
+    else:
+        print("❌ Verificación de webhook fallida")
+        return "Forbidden", 403
 
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    """Recibe mensajes de WhatsApp vía Twilio y responde."""
-    mensaje_entrante = request.form.get("Body", "").strip()
-    numero_remitente = request.form.get("From", "")
+    """Recibe mensajes de WhatsApp vía Cloud API de Meta."""
+    body = request.get_json()
 
-    print(f"📩 Mensaje de {numero_remitente}: {mensaje_entrante}")
+    # Verificar que es un evento de WhatsApp
+    if body.get("object") != "whatsapp_business_account":
+        return "OK", 200
 
-    # 1. Intentar respuesta fija
-    respuesta, imagen = detectar_intencion(mensaje_entrante)
+    try:
+        entry = body.get("entry", [{}])[0]
+        changes = entry.get("changes", [{}])[0]
+        value = changes.get("value", {})
 
-    # 2. Si no hay respuesta fija, usar IA con memoria
-    if respuesta is None:
-        respuesta = respuesta_ia(mensaje_entrante, numero_remitente)
-        imagen = None
-    else:
-        # Guardar también las respuestas fijas en la memoria
-        guardar_mensaje(numero_remitente, "user", mensaje_entrante)
-        guardar_mensaje(numero_remitente, "assistant", respuesta)
+        # Solo procesar si hay mensajes (no status updates)
+        messages = value.get("messages")
+        if not messages:
+            return "OK", 200
 
-    # 3. Enviar respuesta
-    twiml = MessagingResponse()
-    msg = twiml.message(respuesta)
+        message = messages[0]
+        telefono = message.get("from", "")  # "5493435112943" (sin + ni whatsapp:)
+        message_id = message.get("id", "")
+        msg_type = message.get("type", "")
 
-    if imagen:
-        msg.media(imagen)
-        print(f"📤 Respuesta con imagen: {respuesta[:80]}...")
-    else:
-        print(f"📤 Respuesta: {respuesta[:80]}...")
+        # Marcar como leído (tildes azules)
+        marcar_como_leido(message_id)
 
-    return str(twiml), 200, {"Content-Type": "text/xml"}
+        # Extraer texto del mensaje
+        if msg_type == "text":
+            mensaje_entrante = message.get("text", {}).get("body", "").strip()
+        elif msg_type == "interactive":
+            interactive = message.get("interactive", {})
+            mensaje_entrante = (
+                interactive.get("button_reply", {}).get("title", "") or
+                interactive.get("list_reply", {}).get("title", "")
+            ).strip()
+        else:
+            # Audio, imagen, video, sticker, etc.
+            enviar_mensaje_texto(telefono, "Por ahora solo proceso texto 😊 ¿En qué te puedo ayudar?")
+            return "OK", 200
+
+        if not mensaje_entrante:
+            return "OK", 200
+
+        print(f"📩 Mensaje de {telefono}: {mensaje_entrante}")
+
+        # 1. Intentar respuesta fija por palabras clave
+        respuesta, imagen = detectar_intencion(mensaje_entrante)
+
+        # 2. Si no hay respuesta fija, usar IA con memoria
+        if respuesta is None:
+            respuesta = respuesta_ia(mensaje_entrante, telefono)
+            imagen = None
+        else:
+            # Guardar respuestas fijas en la memoria también
+            guardar_mensaje(telefono, "user", mensaje_entrante)
+            guardar_mensaje(telefono, "assistant", respuesta)
+
+        # 3. Enviar respuesta
+        if imagen:
+            # Enviar imagen con caption
+            enviar_imagen(telefono, imagen, caption=respuesta)
+            print(f"📤 Respuesta con imagen: {respuesta[:80]}...")
+        else:
+            enviar_mensaje_texto(telefono, respuesta)
+            print(f"📤 Respuesta: {respuesta[:80]}...")
+
+    except Exception as e:
+        print(f"[webhook] Error procesando mensaje: {e}")
+
+    return "OK", 200
 
 
 @app.route("/", methods=["GET"])
 def health():
     """Health check."""
-    return "✅ Airsoft Paraná Bot activo", 200
+    return "✅ Airsoft Paraná Bot activo (Meta Cloud API)", 200
 
 
 if __name__ == "__main__":
