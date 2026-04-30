@@ -447,6 +447,7 @@ def verificar_webhook():
 def webhook():
     """Recibe mensajes de WhatsApp vía Cloud API de Meta."""
     body = request.get_json()
+    print(f"[DEBUG] Body recibido: {json.dumps(body, indent=2)}")
 
     # Verificar que es un evento de WhatsApp
     if body.get("object") != "whatsapp_business_account":
